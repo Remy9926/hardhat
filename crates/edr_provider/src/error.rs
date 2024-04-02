@@ -183,6 +183,11 @@ pub enum ProviderError<LoggerErrorT> {
         current_hardfork: SpecId,
         minimum_hardfork: SpecId,
     },
+    #[error("The transaction contains EIP-4844 parameters, but they are not supported by the current hardfork: {current_hardfork:?}")]
+    UnsupportedEIP4844Parameters {
+        current_hardfork: SpecId,
+        minimum_hardfork: SpecId,
+    },
     #[error("{method_name} - Method not supported")]
     UnsupportedMethod { method_name: String },
 }
@@ -245,6 +250,7 @@ impl<LoggerErrorT: Debug> From<ProviderError<LoggerErrorT>> for jsonrpc::Error {
             ProviderError::UnmetHardfork { .. } => INVALID_PARAMS,
             ProviderError::UnsupportedAccessListParameter { .. } => INVALID_PARAMS,
             ProviderError::UnsupportedEIP1559Parameters { .. } => INVALID_PARAMS,
+            ProviderError::UnsupportedEIP4844Parameters { .. } => INVALID_PARAMS,
             ProviderError::UnsupportedMethod { .. } => -32004,
         };
 

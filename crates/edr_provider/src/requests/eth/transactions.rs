@@ -19,7 +19,7 @@ use crate::{
     error::TransactionFailureWithTraces,
     requests::validation::{
         validate_eip3860_max_initcode_size, validate_post_merge_block_tags,
-        validate_transaction_and_call_request, validate_transaction_spec,
+        validate_transaction_and_call_request,
     },
     ProviderError, TransactionFailure,
 };
@@ -470,7 +470,16 @@ fn validate_send_transaction_request<LoggerErrorT: Debug>(
         )?;
     }
 
-    validate_transaction_and_call_request(data.spec_id(), request)
+    validate_transaction_and_call_request(data.spec_id(), request).map_err(|err| match err {
+        ProviderError::UnsupportedEIP1559Parameters {
+            minimum_hardfork, ..
+        } => ProviderError::InvalidArgument(format!("\
+EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.
+
+You can use them by running Hardhat Network with 'hardfork' {minimum_hardfork:?} or later.
+        ")),
+        err => err,
+    })
 }
 
 fn validate_send_raw_transaction_request<LoggerErrorT: Debug>(
@@ -494,8 +503,15 @@ fn validate_send_raw_transaction_request<LoggerErrorT: Debug>(
         }
     }
 
-    validate_transaction_spec(data.spec_id(), signed_transaction.into()).map_err(
-        |err| match err {
+    validate_eip3860_max_initcode_size(
+        data.spec_id(),
+        data.allow_unlimited_initcode_size(),
+        &signed_transaction.to(),
+        signed_transaction.data(),
+    )?;
+
+    validate_transaction_and_call_request(data.spec_id(), signed_transaction).map_err(|err| {
+        match err {
             ProviderError::UnsupportedEIP1559Parameters {
                 minimum_hardfork, ..
             } => ProviderError::InvalidArgument(format!(
@@ -505,17 +521,8 @@ Trying to send an EIP-1559 transaction but they are not supported by the current
 You can use them by running Hardhat Network with 'hardfork' {minimum_hardfork:?} or later."
             )),
             err => err,
-        },
-    )?;
-
-    validate_eip3860_max_initcode_size(
-        data.spec_id(),
-        data.allow_unlimited_initcode_size(),
-        &signed_transaction.to(),
-        signed_transaction.data(),
-    )?;
-
-    validate_transaction_and_call_request(data.spec_id(), signed_transaction)
+        }
+    })
 }
 
 #[cfg(test)]
