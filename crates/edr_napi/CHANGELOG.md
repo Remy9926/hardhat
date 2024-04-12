@@ -1,5 +1,11 @@
 # @nomicfoundation/edr
 
+## 0.3.5
+
+### Patch Changes
+
+- e5f048e: Removed i686 & ARM builds of EDR
+
 ## 0.3.4
 
 ### Patch Changes

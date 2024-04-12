@@ -1,5 +1,15 @@
 # hardhat
 
+## 2.22.3
+
+### Patch Changes
+
+- 0d07d8d: Upgrade EDR to version to [0.3.3](https://github.com/NomicFoundation/hardhat/blob/f0b18441bc4a482c37026b7d4a56783d5ce0a749/crates/edr_napi/CHANGELOG.md#033)
+- 66390a5: fix: bump EDR to [0.3.4](https://github.com/NomicFoundation/hardhat/blob/main/crates/edr_napi/CHANGELOG.md#034)
+- 6466e3a: A proper error is now thrown when requiring EDR fails
+- Updated dependencies [e5f048e]
+  - @nomicfoundation/edr@0.3.5
+
 ## 2.22.2
 
 ### Patch Changes
