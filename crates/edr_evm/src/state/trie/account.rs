@@ -1,23 +1,91 @@
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 use alloy_rlp::Decodable;
-use cita_trie::{MemoryDB, PatriciaTrie, Trie as CitaTrie};
+use cita_trie::{PatriciaTrie, Trie as CitaTrie};
 use edr_eth::{account::BasicAccount, Address, B256, U256};
 use hasher::{Hasher, HasherKeccak};
+use parking_lot::RwLock;
 use revm::primitives::{Account, AccountInfo, HashMap};
+use rpds::HashTrieMapSync;
+
+// TODO based on MemoryDB
+#[derive(Debug)]
+struct PersistentMemoryDB {
+    light: bool,
+    storage: RwLock<HashTrieMapSync<Vec<u8>, Vec<u8>>>,
+}
+
+impl PersistentMemoryDB {
+    fn new(light: bool) -> Self {
+        Self {
+            light,
+            storage: RwLock::new(HashTrieMapSync::default()),
+        }
+    }
+}
+
+// TODO test https://github.com/Wodann/cita-trie/commit/60efef58be0b76c528b6d7fa45a8eccdfd8f615c
+impl Clone for PersistentMemoryDB {
+    fn clone(&self) -> Self {
+        Self {
+            light: self.light,
+            storage: RwLock::new(self.storage.read().clone()),
+        }
+    }
+}
+
+impl cita_trie::DB for PersistentMemoryDB {
+    type Error = std::convert::Infallible;
+
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
+        Ok(self.storage.read().get(key).cloned())
+    }
+
+    fn contains(&self, key: &[u8]) -> Result<bool, Self::Error> {
+        Ok(self.storage.read().contains_key(key))
+    }
+
+    fn insert(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), Self::Error> {
+        self.storage.write().insert_mut(key, value);
+        Ok(())
+    }
+
+    fn remove(&self, key: &[u8]) -> Result<(), Self::Error> {
+        // TODO wat
+        if self.light {
+            self.storage.write().remove_mut(key);
+        }
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    // #[cfg(test)]
+    // fn len(&self) -> Result<usize, Self::Error> {
+    //     Ok(self.storage.read().size())
+    // }
+    //
+    // #[cfg(test)]
+    // fn is_empty(&self) -> Result<bool, Self::Error> {
+    //     Ok(self.storage.read().is_empty())
+    // }
+}
 
 /// A change to the account, where `None` implies deletion.
 pub type AccountChange<'a> = (&'a Address, Option<(BasicAccount, &'a HashMap<U256, U256>)>);
 
-type AccountStorageTries = HashMap<Address, (Arc<MemoryDB>, B256)>;
+// TODO light
+type AccountStorageTries = HashMap<Address, (Arc<PersistentMemoryDB>, B256)>;
 
-type Trie = PatriciaTrie<MemoryDB, HasherKeccak>;
+type Trie = PatriciaTrie<PersistentMemoryDB, HasherKeccak>;
 
 /// A trie for maintaining the state of accounts and their storage.
 #[derive(Debug)]
 pub struct AccountTrie {
     state_root: B256,
-    state_trie_db: Arc<MemoryDB>,
+    state_trie_db: Arc<PersistentMemoryDB>,
     storage_trie_dbs: AccountStorageTries,
 }
 
@@ -25,7 +93,7 @@ impl AccountTrie {
     /// Constructs a `TrieState` from an (address -> account) mapping.
     #[cfg_attr(feature = "tracing", tracing::instrument)]
     pub fn with_accounts(accounts: &HashMap<Address, AccountInfo>) -> Self {
-        let state_trie_db = Arc::new(MemoryDB::new(true));
+        let state_trie_db = Arc::new(PersistentMemoryDB::new(true));
         let hasher = Arc::new(HasherKeccak::new());
 
         let mut storage_trie_dbs = HashMap::new();
@@ -33,7 +101,8 @@ impl AccountTrie {
         let state_root = {
             let mut state_trie = Trie::new(state_trie_db.clone(), hasher.clone());
             accounts.iter().for_each(|(address, account_info)| {
-                let storage_trie_db = Arc::new(MemoryDB::new(true));
+                // TODO light
+                let storage_trie_db = Arc::new(PersistentMemoryDB::new(true));
                 let storage_root = {
                     let mut storage_trie = Trie::new(storage_trie_db.clone(), hasher.clone());
 
@@ -61,7 +130,7 @@ impl AccountTrie {
         I: IntoIterator<Item = C>,
         C: IntoIterator<Item = AccountChange<'a>>,
     {
-        let state_trie_db = Arc::new(MemoryDB::new(true));
+        let state_trie_db = Arc::new(PersistentMemoryDB::new(true));
 
         let mut storage_trie_dbs = HashMap::new();
 
@@ -73,7 +142,7 @@ impl AccountTrie {
                     if let Some((mut account, storage)) = change {
                         let (storage_trie_db, storage_root) =
                             storage_trie_dbs.entry(*address).or_insert_with(|| {
-                                let storage_trie_db = Arc::new(MemoryDB::new(true));
+                                let storage_trie_db = Arc::new(PersistentMemoryDB::new(true));
                                 let storage_root = {
                                     let mut storage_trie = Trie::new(
                                         storage_trie_db.clone(),
@@ -190,7 +259,7 @@ impl AccountTrie {
 
                     let (storage_trie_db, storage_root) =
                         self.storage_trie_dbs.entry(*address).or_insert_with(|| {
-                            let storage_trie_db = Arc::new(MemoryDB::new(true));
+                            let storage_trie_db = Arc::new(PersistentMemoryDB::new(true));
                             let storage_root = {
                                 let mut storage_trie = Trie::new(
                                     storage_trie_db.clone(),
@@ -242,7 +311,7 @@ impl AccountTrie {
 
         // Check whether the account already existed. If so, use its storage root.
         let (_db, storage_root) = self.storage_trie_dbs.entry(*address).or_insert_with(|| {
-            let storage_trie_db = Arc::new(MemoryDB::new(true));
+            let storage_trie_db = Arc::new(PersistentMemoryDB::new(true));
             let storage_root = {
                 let mut storage_trie =
                     Trie::new(storage_trie_db.clone(), Arc::new(HasherKeccak::new()));
@@ -401,7 +470,7 @@ impl AccountTrie {
     ) -> Result<Option<U256>, ErrorT> {
         let (storage_trie_db, storage_root) =
             self.storage_trie_dbs.entry(*address).or_insert_with(|| {
-                let storage_trie_db = Arc::new(MemoryDB::new(true));
+                let storage_trie_db = Arc::new(PersistentMemoryDB::new(true));
                 let storage_root = {
                     let mut storage_trie =
                         Trie::new(storage_trie_db.clone(), Arc::new(HasherKeccak::new()));
@@ -524,7 +593,7 @@ impl Clone for AccountTrie {
 impl Default for AccountTrie {
     #[cfg_attr(feature = "tracing", tracing::instrument)]
     fn default() -> Self {
-        let state_trie_db = Arc::new(MemoryDB::new(true));
+        let state_trie_db = Arc::new(PersistentMemoryDB::new(true));
         let state_root = {
             let mut state_trie = Trie::new(state_trie_db.clone(), Arc::new(HasherKeccak::new()));
 
